@@ -9,6 +9,9 @@ In the hardware phase, the focus is on designing and implementing a programmable
 ### Software Development Phase
 The software development phase involves programming the SoC using embedded C. This phase focuses on implementing the functionality of the smartwatch system. Specifically, the specifications include utilizing the push buttons for various functions such as reset, trigger, pause, and stop of the stopwatch, with the ability to display seconds and minutes. The switches are used for watch update and display switching between watch and stopwatch modes. The 7-segment displays are utilized for displaying time and stopwatch information, including minutes and seconds.
 
+
+![Smartwatch Image](https://github.com/aminal22/smartwatch/assets/114859285/37b73b62-d76b-4182-a646-cbe8842a090d)
+
 ### Technologies Used
 - Intel Quartus Prime: Used for FPGA development and synthesis.
 - Altera DE1 Cyclone II: FPGA development board used for prototyping and testing.
