@@ -1,259 +1,301 @@
-#include "sys/alt_stdio.h"
+
 #include "system.h"
-#include <unistd.h>
+#include "sys/alt_stdio.h"
+#include "sys/unistd.h"   // contient le header de usleep
 #include "sys/alt_irq.h"
+#define ON 1
+#define OFF 0
+#define blink_delay 50000 // temps d'attente pour le clignotement de la montre pendant la mise � jour
+// All global variables
+unsigned char seven_seg_table[] =
+	  {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07,
+	   0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71, 0x00 };
+short H,M,S,ms;  // variables de la montre
+short chrono_M, chrono_S,chrono_ms; // variables du chronom�tre
+short MJ=OFF, chrono=OFF, stop=ON, clear=OFF; // variables de contr�le des inputs
+short blinking_R=OFF,blinking_L=OFF;           // variables de controle du clignotement
 
-unsigned char seven_seg_decode_table[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7C, 0x07, 0x7F, 0x67, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71 };
-char	hex_segments[] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-
-volatile int * BOTTONS_ptr = (int *) BOTTONS_BASE;
-
+int press = 0;
 volatile int edge_capture;
-volatile int * Timer_POINTER = (int *) TIMER_BASE;
+// All pointers
+volatile int * TIMER_ptr = (int *) TIMER_BASE;
+volatile int * KEY_ptr = (int *) KEY_BASE;
+volatile int * SW_ptr = (int *) SW_BASE;
+volatile int * green_LED_ptr = (int *) LEDG_BASE;
+volatile int * red_LED_ptr = (int *) LEDR_BASE;
+volatile int * HEX_ptr = (int *) HEX_BASE;
 
-short seconds = 0 ;
-short minutes = 0 ;
-short heurs   = 0 ;
+// Init function prototypes
+void init_timer();
+void init_key();
 
-int affiche_Mode 	= 	0x1 ;                // 1 : mode normale   / 0 : mode chrono
-int chrono_etat  	=  	0x0 ;    			// 1 : etat declanche / 0 : etat pause
-int change_temps 	=  	0x0 ; 		        // 1 : mode change    / 0 : mode sans chang. par l'utilisateur
-int change_droite 	= 	0x1 ; 		         // 1 : change min  / 0 : change heurs
+// Interrupt function prototypes
+void handle_timer_interrupts(void* context, alt_u32 id);
+void handle_key_interrupts(void* context, alt_u32 id);
 
-short temps_minute ;
-short temps_heurs ;
-short temps_seconds ;
-
-short chrono_minute ;
-short chrono_heurs ;
-short chrono_seconds ;
-
-void affiche_hex_min_sec();
-void affiche_hex_heur_min();
-short separer_num_2_time(short num);
-
-
-void Update_HEX_display( int buffer )
-{
-	volatile int * HEX3_HEX0_ptr = (int *) HEX_BASE;
-	int shift_buffer, nibble;
-	char code;
-	int i;
-
-	shift_buffer = buffer;
-	for ( i = 0; i < 4; ++i )
-	{
-		nibble = shift_buffer & 0x0000000F;		// character is in rightmost nibble
-		code = seven_seg_decode_table[nibble];
-		hex_segments[i] = code;
-		shift_buffer = shift_buffer >> 4;
-	}
-	*(HEX3_HEX0_ptr) = *(int *) hex_segments; 		// drive the hex displays
-	return;
-}
-
-void Increment_time_chrono ( )
-{
-		chrono_seconds ++ ;
-		if (chrono_seconds > 60)
-		{
-			chrono_seconds = 0 ;
-			chrono_minute ++  ;
-			if (chrono_minute > 60 )
-				{
-				chrono_minute = 0 ;
-				chrono_heurs ++ ;
-
-				if ( chrono_heurs > 24) chrono_heurs = 0 ;
-			}
-		}
-}
-
-void Increment_time_temps ()
-{
-		temps_seconds ++ ;
-		if (temps_seconds > 60)
-		{
-			temps_seconds = 0 ;
-
-			temps_minute  ++  ;
-
-			if (temps_minute > 60 )
-				{
-				temps_minute = 0 ;
-				temps_heurs ++ ;
-				if (temps_heurs > 24) temps_heurs = 0 ;
-			}
-		}
-}
-
-
-void init_timer(){
-	void * edge_capture_ptr = (void*) & edge_capture ;
-	
-	temps_heurs = 0 ; temps_minute = 0 ; temps_seconds = 0 ;
-	chrono_heurs = 0 ; chrono_minute = 0 ;	chrono_seconds = 0 ;
-
-	*(Timer_POINTER + 2) = 0XF ; 				// Masque de l’interruption
-	alt_irq_register (TIMER_IRQ, edge_capture_ptr,handle_TIMER_interrupts);
-}
-
-void handle_TIMER_interrupts (void* context, alt_u32 id)
-{
-	int rised_timer = * (Timer_POINTER +3); // lecture du registre du periph
-
-	if ( rised_timer & 0X1)
-	{
-		if ( !change_temps )
-			Increment_time_temps();
-
-		if ( (!afficheMode) && chrono_etat )
-		{
-			Increment_time_temps();
-			Increment_time_chrono();
-		}
-	}
-
-	( (afficheMode & (!change_temps)) == 1 ) ? affiche_hex_heur_min(temps) : affiche_hex_min_sec(chrono);
-
-	*(Timer_POINTER + 3) = 0 ; // effacer le registre du periph
-}
-
-
-void affiche_hex_heur_min()
-{
-	int buff_heurs, buff_minute;
-	int Buffer_HEX ;
-
-	buff_heurs =separer_num_2_time  (temps_heurs);
-	buff_minute =separer_num_2_time  (temps_minute);
-
-	Buffer_HEX = buff_minute + (buff_heurs << 8);
-	Update_HEX_display(Buffer_HEX);
-}
-
-
-void affiche_hex_min_sec()
-{
-	int buff_minute, buff_seconds;
-	int Buffer_HEX ;
-
-	buff_minute    =  separer_num_2_time(chrono_minute);
-	buff_seconds   =  separer_num_2_time(chrono_seconds);
-
-	Buffer_HEX = buff_seconds + (buff_minute << 8);
-	Update_HEX_display(Buffer_HEX);
-}
-
-
-short separer_num_2_time(short num)
-{
-	short num_dec, num_unit ;
-	for (int i = 0 ; i<= 5 ; i++)
-	{
-		if((int)( num / (i*10)) == 1 )
-		{
-			num_dec = i;
-			break;
-		}
-	}
-	num_unit = num - (num_dec*10) ;
-
-	return (num_unit + (num_dec << 4)) ;
-}
-
-
-void handle_KEY_interrupts(void* context, alt_u32 id)
-{
-	int press = * (KEY_POINTER + 3 ); // lecture du registre du periph
-
-	if ( press & 0X1) 		// KEY 0 RESET      / exite mode change temps
-	{
-		if ( change_temps | (!afficheMode) )
-		{
-			temps_heurs = 0 ; temps_minute = 0 ; temps_seconds = 0 ;
-			chrono_minute = 0 ;   chrono_minute = 0 ;  chrono_minute = 0 ;
-		}
-	}
-
-	else if ( press & 0X4 ) // KEY 2 PAUSE      / --
-	{
-		if ( change_temps )
-		{
-			// decrementation du valeur
-			change_droite ? dec_temps_conf( temps_minute , 60) : dec_temps_conf( temps_heurs , 23);
-		}
-		else if ( !change_temps )
-			chrono_etat = 0 ;
-	}
-
-	else if ( press & 0X2 ) // KEY 1 DECLANCHER / ++
-	{
-		if ( change_temps )
-		{
-			// incrementation de la valeur
-			(change_droite == 1 ) ? incr_temps_conf(&(temps_minute) , 60): incr_temps_conf( & (temps_heurs) , 23);
-		}
-		else if ( !change_temps )
-			chrono_etat = 1  ;
-	}
-
-	else if ( press & 0X8 ) // KEY 3 / mode normale => mode chrono || mode => mode
-	{
-		if ( afficheMode ) 		// chang. mode normale => mode chrono
-
-			afficheMode = 0 ;
-
-
-		else if ( (!afficheMode) & (!change_temps) ) 	// chang. mode chrono => mode change_temps
-		{
-			change_temps  = 1 ;
-			change_droite = 0 ;
-		}
-		else if ( (!afficheMode) & change_temps ) 	  // chang. mode change_temps => mode normale
-		{
-			change_droite = 1  ;
-		}
-		else if ( (!afficheMode) & change_temps  & change_droite ) // chang. mode change_temps => mode normal
-		{
-			change_temps  = 0 ;
-			change_droite = 0 ;
-			afficheMode   = 1  ;
-		}
-	}
-	(change_temps == 1 ) ?  *(Timer_POINTER + 3) = 0 : *(Timer_POINTER + 3) = 0xf ;
-	if ( change_temps )
-	affiche_hex_heur_min(temps);
-
-	*(KEY_POINTER + 3) = 0 ; // effacer le registre du periph
-}
-
-void init_key()
-{
-	void * edge_capture_ptr = (void*) & edge_capture ;
-
-	*(KEY_POINTER + 2) = 0XF ; // Masque de l’interruption
-	alt_irq_register ( KEY_IRQ, edge_capture_ptr,handle_KEY_interrupts);
-}
-
-
-
-void incr_temps_conf (short &var_temps, short max_var)
-{
-	(*var_temps < max_var) ? *var_temps ++ : *var_temps = 0 ;
-}
-
-void decr_temps_conf(short var_temps, short max_var)
-{
-	(*var_temps > 0  ) ? *var_temps -- : *var_temps = max_var ;
-}
+// Other function prototypes
+void timer_montre();
+void timer_chrono();
+void show(short R, short L); // affichage des deux parties du HEX
+void show_blinking(short R, short L, char ch); // affichage d'une des parties du HEX en fonction de 'ch'
+void blinking(); // clignotement de la partie de la montre (heure ou minute) � mettre � jour, � l'aide des deux fonctions pr�c�dentes
+void HEX_update_display(); // actualisation du HEX
+void SW_update_input(); // reception des inputs de SW et mise � jour des variables de controle
 
 int main()
-{
-	init_key();
+{ 
+	// Inits
 	init_timer();
+	init_key();
+	alt_putstr("Hello from Nios II!\n");
+	while (1){
+		SW_update_input(); // choix montre/chrono
+		* red_LED_ptr = * SW_ptr ; // affichage de l'etat de SW sur LEDR
+		HEX_update_display(); // Mise � jour du display HEX
+		usleep(500);
+	}
 
-	return 0 ;
-
+	return 0;
 }
 
+/* ----------- Init functions  -------------------- */
+
+void init_timer()
+	{
+	    /* Recast the edge_capture pointer to match the alt_irq_register() function
+	     * prototype. */
+	    void* edge_capture_ptr = (void*) &edge_capture;
+	    /* set the interval timer period for scrolling the HEX displays */
+		*(TIMER_ptr + 1) = 0x7;	// STOP = 0, START = 1, CONT = 1, ITO = 1
+	    alt_irq_register( TIMER_IRQ, edge_capture_ptr,handle_timer_interrupts );
+	}
+
+void init_key()
+	{
+		void* edge_capture_ptr = (void*) &edge_capture;
+		* (KEY_ptr + 2) = 0xE;
+		alt_irq_register( KEY_IRQ, edge_capture_ptr,handle_key_interrupts );
+	}
+
+/* --------------- End of init functions  -------------------- */
+
+
+/* ----------- Interrupt functions  -------------------- */
+
+void handle_timer_interrupts(void* context, alt_u32 id)
+	{
+	    /* Reset the Button's edge capture register. */
+		*(TIMER_ptr) = 0; 				// Clear the interrupt
+
+		timer_montre();
+
+		if(chrono==ON ){
+			timer_chrono();
+		}
+		// La LED green montre l'evolution de la seconde S de la montre
+		if(chrono==OFF && MJ==OFF){
+			*green_LED_ptr = S;
+		}
+		else{
+			*green_LED_ptr = 0;
+		}
+
+	}
+
+void handle_key_interrupts(void* context, alt_u32 id)
+	{
+		press = * (KEY_ptr +3) ;
+		if (press&0x2){
+			// chrono
+			if(chrono==ON){
+				stop=OFF; // d�clencher le chrono
+			}
+			// Montre
+			else{
+				// on/off de la mise � jour
+				if (MJ==OFF){
+					MJ = ON;
+					blinking_L=ON;
+					blinking_R=OFF;
+				}
+				else{
+					MJ = OFF;
+					blinking_L=OFF;
+					blinking_R=OFF;
+				}
+			}
+
+		}
+		else if (press&0x4){
+			//chrono
+			if(chrono==ON){
+				stop=ON;  // pause chrono
+			}
+			//Montre
+			else{ // changement de la partie � mettre � jour
+				if(blinking_L==ON && blinking_R==OFF){
+					blinking_L=OFF;
+					blinking_R=ON;
+				}else{
+					if(blinking_L==OFF && blinking_R==ON){
+						blinking_L=ON;
+						blinking_R=OFF;
+					}
+				}
+			}
+		}
+		else if (press&0x8) {
+			//chrono
+			if(chrono==ON){
+				clear=ON; // arr�ter/r�initialiser le chrono
+			}
+			//Montre
+			else{ // incr�mentation de la partie choisie
+				if(MJ==ON && blinking_L==ON){
+					M= (M+1)%60;
+				}
+				if(MJ==ON && blinking_R==ON){
+					H= (H+1)%24;
+				}
+			}
+		}
+
+		* (KEY_ptr + 3) = 0; // clear register of key interrupt
+	}
+
+/* ----------- End of interrupt functions  -------------------- */
+
+/* ------------- Other functions  -------------------- */
+
+void timer_montre(){
+	ms++;
+	if( MJ == ON ){
+		ms =0;
+		S=0;
+	}
+	if(ms==1000){
+		ms=0;
+		S++;
+	}
+	if(S==60){
+		S=0;
+		M++;
+	}
+	if(M==60){
+		M=0;
+		H++;
+	}
+	if(H==24){
+		H=0;
+	}
+}
+
+void timer_chrono(){
+	if( clear == ON ){
+		chrono_ms=0;
+		chrono_S=0;
+		chrono_M=0;
+		clear=OFF;
+		stop=ON;
+	}
+	if( stop == OFF ){
+		chrono_ms ++;
+	}
+	if(chrono_ms==1000){
+		chrono_ms=0;
+		chrono_S++;
+	}
+	if(chrono_S==60){
+		chrono_S=0;
+		chrono_M++;
+	}
+	if(chrono_M==60){
+		chrono_M=0;
+	}
+}
+
+void show(short R, short L){
+
+	short a,b,c,d;
+    a= L%10;
+    b=L/10;
+    c=R%10;
+    d=R/10;
+   * HEX_ptr = ((seven_seg_table[d]<<24)& 0xFF000000) |
+			   ((seven_seg_table[c]<<16)& 0x00FF0000) |
+			   ((seven_seg_table[b]<< 8)& 0x0000FF00) |
+			   ((seven_seg_table[a])& 0x000000FF);
+}
+
+void show_blinking(short R, short L, char ch){
+	short a,b,c,d;
+		a= L%10;
+	    b=L/10;
+	    c=R%10;
+	    d=R/10;
+	if(ch=='R'){
+		* HEX_ptr =((seven_seg_table[17]<<24)& 0xFF000000) |
+				   ((seven_seg_table[17]<<16)& 0x00FF0000) |
+				   ((seven_seg_table[b]<< 8)& 0x0000FF00)  |
+				   ((seven_seg_table[a])& 0x000000FF);
+	}else{
+		* HEX_ptr =((seven_seg_table[d]<<24)& 0xFF000000) |
+				   ((seven_seg_table[c]<<16)& 0x00FF0000) |
+				   ((seven_seg_table[17]<< 8)& 0x0000FF00)|
+				   ((seven_seg_table[17])& 0x000000FF);
+	}
+}
+
+void blinking(){
+	char ch;
+	if(blinking_L==ON){
+		ch='L';
+	}else{ // blinking_R est donc ON
+		ch='R';
+	}
+	//chrono
+	if( chrono == ON ){
+		show_blinking(chrono_M,chrono_S,ch);
+		usleep(blink_delay);
+		show(chrono_M,chrono_S);
+		usleep(blink_delay);
+	}
+	//Montre
+	else{
+		show_blinking(H,M,ch);
+		usleep(blink_delay);
+		show(H,M);
+		usleep(blink_delay);
+	}
+}
+
+void HEX_update_display(){
+	if(blinking_L==ON || blinking_R==ON){
+		blinking();
+	}
+	else{
+		//chrono
+		if(chrono==ON){
+			show(chrono_M,chrono_S);
+		}
+		//Montre
+		else{
+			show(H,M);
+		}
+	}
+}
+
+void SW_update_input(){
+	press = * SW_ptr  ;
+	if (press&0x1){
+		chrono = ON;
+		MJ=OFF;
+		blinking_L = OFF;
+		blinking_R = OFF;
+	}
+	else{
+		chrono = OFF;
+	}
+}
+
+/* ----------- End of other functions  -------------------- */
